@@ -1,9 +1,9 @@
 <?php
 return [
     'host' => 'localhost',
-    'dbname' => 'it_support_db',
-    'username' => 'it_support_user',
-    'password' => 'YourStrongPassword123!',  // ЗМІНІТЬ НА СВІЙ ПАРОЛЬ
+    'dbname' => 'u442651334_main',
+    'username' => 'u442651334_main',
+    'password' => 'Cthutq19971816!',  // ЗМІНІТЬ НА СВІЙ ПАРОЛЬ
     'charset' => 'utf8mb4',
     'options' => [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
