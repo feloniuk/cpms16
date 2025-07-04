@@ -139,6 +139,10 @@ class TelegramBot {
                 $this->handleBranchSelection($chat_id, $user_id, $message_id, $parts[1]);
                 break;
                 
+            case 'skip_phone':
+                $this->handleSkipPhone($chat_id, $user_id, $username);
+                break;
+                
             default:
                 $this->editMessage($chat_id, $message_id, "Невідома дія. Поверніться до головного меню:", $this->keyboards->getMainMenu());
         }
@@ -226,21 +230,25 @@ class TelegramBot {
     }
     
     private function handleStateMessage($chat_id, $user_id, $username, $text, $current_state, $temp_data) {
+        // Получаем актуальные данные из БД
+        $userState = $this->userStateRepo->getUserState($user_id);
+        $fresh_temp_data = $userState ? $userState['temp_data'] : [];
+        
         switch ($current_state) {
             case 'repair_awaiting_room':
-                $this->handleRepairRoomInput($chat_id, $user_id, $username, $text, $temp_data);
+                $this->handleRepairRoomInput($chat_id, $user_id, $username, $text, $fresh_temp_data);
                 break;
                 
             case 'repair_awaiting_description':
-                $this->handleRepairDescriptionInput($chat_id, $user_id, $username, $text, $temp_data);
+                $this->handleRepairDescriptionInput($chat_id, $user_id, $username, $text, $fresh_temp_data);
                 break;
                 
             case 'repair_awaiting_phone':
-                $this->handleRepairPhoneInput($chat_id, $user_id, $username, $text, $temp_data);
+                $this->handleRepairPhoneInput($chat_id, $user_id, $username, $text, $fresh_temp_data);
                 break;
                 
             case 'cartridge_awaiting_room':
-                $this->handleCartridgeRoomInput($chat_id, $user_id, $username, $text, $temp_data);
+                $this->handleCartridgeRoomInput($chat_id, $user_id, $username, $text, $fresh_temp_data);
                 break;
                 
             default:
@@ -259,8 +267,11 @@ class TelegramBot {
         $this->userStateRepo->addToTempData($user_id, 'room_number', trim($room_number));
         $this->userStateRepo->setState($user_id, 'repair_awaiting_description');
         
+        // Получаем обновленные данные
+        $updated_temp_data = $this->userStateRepo->getTempData($user_id);
+        
         $message = "🔧 <b>Виклик ІТ майстра</b>\n";
-        $message .= "Філія: <b>{$temp_data['branch_name']}</b>\n";
+        $message .= "Філія: <b>" . ($updated_temp_data['branch_name'] ?? 'Не вказано') . "</b>\n";
         $message .= "Кабінет: <b>" . trim($room_number) . "</b>\n\n";
         $message .= "Опишіть проблему (до 1000 символів):";
         
@@ -277,9 +288,12 @@ class TelegramBot {
         $this->userStateRepo->addToTempData($user_id, 'description', trim($description));
         $this->userStateRepo->setState($user_id, 'repair_awaiting_phone');
         
+        // Получаем обновленные данные
+        $updated_temp_data = $this->userStateRepo->getTempData($user_id);
+        
         $message = "🔧 <b>Виклик ІТ майстра</b>\n";
-        $message .= "Філія: <b>{$temp_data['branch_name']}</b>\n";
-        $message .= "Кабінет: <b>{$temp_data['room_number']}</b>\n";
+        $message .= "Філія: <b>" . ($updated_temp_data['branch_name'] ?? 'Не вказано') . "</b>\n";
+        $message .= "Кабінет: <b>" . ($updated_temp_data['room_number'] ?? 'Не вказано') . "</b>\n";
         $message .= "Проблема: <b>" . htmlspecialchars(substr($description, 0, 100)) . "...</b>\n\n";
         $message .= "Введіть номер телефону для зв'язку або натисніть 'Пропустити':";
         
@@ -318,6 +332,17 @@ class TelegramBot {
     
     private function createRepairRequest($chat_id, $user_id, $username, $temp_data, $phone) {
         try {
+            // Получаем актуальные данные из состояния
+            $userState = $this->userStateRepo->getUserState($user_id);
+            $current_temp_data = $userState ? $userState['temp_data'] : $temp_data;
+            
+            // Проверяем что все данные есть
+            if (!$current_temp_data || !isset($current_temp_data['branch_id'], $current_temp_data['room_number'], $current_temp_data['description'])) {
+                $this->sendMessage($chat_id, "❌ Помилка: не всі дані заявки збережено. Спробуйте ще раз:", $this->keyboards->getMainMenu());
+                $this->userStateRepo->clearState($user_id);
+                return;
+            }
+            
             // TODO: Тут буде виклик API для створення заявки
             // Поки що імітуємо створення заявки
             
@@ -325,9 +350,9 @@ class TelegramBot {
             
             $message = "✅ <b>Заявку створено успішно!</b>\n\n";
             $message .= "📋 <b>Деталі заявки:</b>\n";
-            $message .= "🏢 Філія: {$temp_data['branch_name']}\n";
-            $message .= "🚪 Кабінет: {$temp_data['room_number']}\n";
-            $message .= "📝 Проблема: " . htmlspecialchars($temp_data['description']) . "\n";
+            $message .= "🏢 Філія: " . ($current_temp_data['branch_name'] ?? 'Не вказано') . "\n";
+            $message .= "🚪 Кабінет: " . ($current_temp_data['room_number'] ?? 'Не вказано') . "\n";
+            $message .= "📝 Проблема: " . htmlspecialchars($current_temp_data['description']) . "\n";
             if (!empty($phone)) {
                 $message .= "📞 Телефон: $phone\n";
             }
@@ -336,8 +361,8 @@ class TelegramBot {
             
             $this->sendMessage($chat_id, $message, $this->keyboards->getMainMenu(), 'HTML');
             
-            // TODO: Відправити сповіщення адміністраторам
-            $this->notifyAdminsAboutRepairRequest($temp_data, $phone, $username, $user_id);
+            // Відправити сповіщення адміністраторам
+            $this->notifyAdminsAboutRepairRequest($current_temp_data, $phone, $username, $user_id);
             
         } catch (Exception $e) {
             $this->logError("Error creating repair request: " . $e->getMessage());
@@ -350,9 +375,9 @@ class TelegramBot {
         $admins = $this->adminRepo->getActiveAdmins();
         
         $message = "🔧 <b>Нова заявка на ремонт!</b>\n\n";
-        $message .= "📍 Філія: <b>{$temp_data['branch_name']}</b>\n";
-        $message .= "🏢 Кабінет: <b>{$temp_data['room_number']}</b>\n";
-        $message .= "📝 Проблема: " . htmlspecialchars($temp_data['description']) . "\n";
+        $message .= "📍 Філія: <b>" . ($temp_data['branch_name'] ?? 'Не вказано') . "</b>\n";
+        $message .= "🏢 Кабінет: <b>" . ($temp_data['room_number'] ?? 'Не вказано') . "</b>\n";
+        $message .= "📝 Проблема: " . htmlspecialchars($temp_data['description'] ?? 'Не вказано') . "\n";
         $message .= "👤 Користувач: " . ($username ? "@$username" : "ID: $user_id") . "\n";
         if (!empty($phone)) {
             $message .= "📞 Телефон: $phone\n";
@@ -360,7 +385,11 @@ class TelegramBot {
         $message .= "\n⏰ " . date('d.m.Y H:i');
         
         foreach ($admins as $admin) {
-            $this->sendMessage($admin['telegram_id'], $message, null, 'HTML');
+            try {
+                $this->sendMessage($admin['telegram_id'], $message, null, 'HTML');
+            } catch (Exception $e) {
+                $this->logError("Failed to notify admin {$admin['telegram_id']}: " . $e->getMessage());
+            }
         }
     }
     
@@ -442,6 +471,19 @@ class TelegramBot {
         }
         
         return $decoded;
+    }
+    
+    private function handleSkipPhone($chat_id, $user_id, $username) {
+        $userState = $this->userStateRepo->getUserState($user_id);
+        $temp_data = $userState ? $userState['temp_data'] : null;
+        
+        if ($temp_data && isset($temp_data['description'])) {
+            // Создание заявки без телефона
+            $this->createRepairRequest($chat_id, $user_id, $username, $temp_data, '');
+        } else {
+            $this->sendMessage($chat_id, "Помилка: дані заявки не знайдено. Почніть спочатку:", $this->keyboards->getMainMenu());
+            $this->userStateRepo->clearState($user_id);
+        }
     }
     
     // Методи логування

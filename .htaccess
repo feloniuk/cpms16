@@ -1,0 +1,38 @@
+# IT Support Bot - Упрощенный .htaccess для отладки
+# Используйте эту версию если получаете 403 ошибку
+
+# Включение модуля перезаписи
+RewriteEngine On
+
+# Основная защита - только запрет доступа к критичным папкам
+<Directory "config">
+    Require all denied
+</Directory>
+
+<Directory "logs">
+    Require all denied
+</Directory>
+
+# Защита log файлов
+<Files "*.log">
+    Require all denied
+</Files>
+
+# Защита конфигураций
+<Files "config/*.php">
+    Require all denied
+</Files>
+
+# Скрытие .htaccess
+<Files ".htaccess">
+    Require all denied
+</Files>
+
+# Страница по умолчанию
+DirectoryIndex index.php test_db.php
+
+# Основные безопасные заголовки
+<IfModule mod_headers.c>
+    Header always append X-Frame-Options SAMEORIGIN
+    Header always set X-Content-Type-Options nosniff
+</IfModule>
