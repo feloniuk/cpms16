@@ -1,88 +1,86 @@
 <?php
-// Скрипт для проверки состояний пользователей
+// Скрипт для проверки состояния конкретного пользователя
+
+if ($argc < 2) {
+    echo "Використання: php check_user_state.php TELEGRAM_ID\n";
+    echo "Приклад: php check_user_state.php 123456789\n";
+    exit(1);
+}
+
+$telegram_id = $argv[1];
 
 require_once __DIR__ . '/core/repositories/UserStateRepository.php';
-
-echo "🔍 Проверка состояний пользователей\n";
-echo "===================================\n\n";
 
 try {
     $userStateRepo = new UserStateRepository();
     
-    // Получаем все состояния
-    $db = Database::getInstance();
-    $stmt = $db->query("SELECT * FROM user_states ORDER BY updated_at DESC");
-    $states = $stmt->fetchAll();
+    echo "🔍 Перевірка стану користувача: $telegram_id\n";
+    echo str_repeat("=", 50) . "\n\n";
     
-    if (empty($states)) {
-        echo "📭 Нет сохраненных состояний пользователей\n";
+    $userState = $userStateRepo->getUserState($telegram_id);
+    
+    if (!$userState) {
+        echo "❌ Стан користувача не знайдено в БД\n";
+        exit(0);
+    }
+    
+    echo "✅ Стан користувача знайдено:\n\n";
+    echo "📍 Поточний стан: " . ($userState['current_state'] ?? 'NULL') . "\n";
+    echo "⏰ Останнє оновлення: " . $userState['updated_at'] . "\n\n";
+    
+    if ($userState['temp_data']) {
+        echo "📋 Тимчасові дані:\n";
+        foreach ($userState['temp_data'] as $key => $value) {
+            echo "   $key: $value\n";
+        }
+        echo "\n";
     } else {
-        echo "📊 Найдено состояний: " . count($states) . "\n\n";
+        echo "📋 Тимчасові дані відсутні\n\n";
+    }
+    
+    // Детальна информация о состоянии
+    switch ($userState['current_state']) {
+        case 'repair_awaiting_branch':
+            echo "ℹ️ Користувач очікує вибору філії для заявки на ремонт\n";
+            break;
+        case 'repair_awaiting_room':
+            echo "ℹ️ Користувач повинен ввести номер кабінету\n";
+            echo "Філія: " . ($userState['temp_data']['branch_name'] ?? 'не збережено') . "\n";
+            break;
+        case 'repair_awaiting_description':
+            echo "ℹ️ Користувач повинен ввести опис проблеми\n";
+            echo "Філія: " . ($userState['temp_data']['branch_name'] ?? 'не збережено') . "\n";
+            echo "Кабінет: " . ($userState['temp_data']['room_number'] ?? 'не збережено') . "\n";
+            break;
+        case 'repair_awaiting_phone':
+            echo "ℹ️ Користувач повинен ввести телефон або пропустити\n";
+            echo "Філія: " . ($userState['temp_data']['branch_name'] ?? 'не збережено') . "\n";
+            echo "Кабінет: " . ($userState['temp_data']['room_number'] ?? 'не збережено') . "\n";
+            echo "Проблема: " . ($userState['temp_data']['description'] ?? 'не збережено') . "\n";
+            break;
+        default:
+            echo "ℹ️ Невідомий стан: " . $userState['current_state'] . "\n";
+    }
+    
+    // Проверка что все нужные данные есть
+    if ($userState['current_state'] === 'repair_awaiting_phone') {
+        $requiredFields = ['branch_id', 'branch_name', 'room_number', 'description'];
+        $missingFields = [];
         
-        foreach ($states as $state) {
-            echo "👤 Пользователь: {$state['telegram_id']}\n";
-            echo "📍 Состояние: " . ($state['current_state'] ?? 'NULL') . "\n";
-            echo "⏰ Обновлено: {$state['updated_at']}\n";
-            
-            if ($state['temp_data']) {
-                $temp_data = json_decode($state['temp_data'], true);
-                echo "📋 Временные данные:\n";
-                foreach ($temp_data as $key => $value) {
-                    echo "   $key: $value\n";
-                }
-            } else {
-                echo "📋 Временные данные: отсутствуют\n";
+        foreach ($requiredFields as $field) {
+            if (!isset($userState['temp_data'][$field]) || empty($userState['temp_data'][$field])) {
+                $missingFields[] = $field;
             }
-            echo str_repeat("-", 40) . "\n";
+        }
+        
+        if (empty($missingFields)) {
+            echo "\n✅ Всі необхідні дані для створення заявки присутні\n";
+        } else {
+            echo "\n❌ Відсутні дані: " . implode(', ', $missingFields) . "\n";
         }
     }
     
-    // Проверка работы методов репозитория
-    echo "\n🧪 Тест методов UserStateRepository:\n";
-    
-    $test_user_id = 999999999; // Тестовый ID
-    
-    // Тест установки состояния
-    echo "1. Тестируем setState...\n";
-    $result = $userStateRepo->setState($test_user_id, 'test_state', ['test_key' => 'test_value']);
-    echo ($result ? "✅" : "❌") . " setState выполнен\n";
-    
-    // Тест получения состояния
-    echo "2. Тестируем getUserState...\n";
-    $testState = $userStateRepo->getUserState($test_user_id);
-    if ($testState) {
-        echo "✅ getUserState вернул данные:\n";
-        echo "   current_state: {$testState['current_state']}\n";
-        echo "   temp_data: " . json_encode($testState['temp_data'], JSON_UNESCAPED_UNICODE) . "\n";
-    } else {
-        echo "❌ getUserState не вернул данные\n";
-    }
-    
-    // Тест addToTempData
-    echo "3. Тестируем addToTempData...\n";
-    $result = $userStateRepo->addToTempData($test_user_id, 'new_key', 'new_value');
-    echo ($result ? "✅" : "❌") . " addToTempData выполнен\n";
-    
-    // Проверка обновленных данных
-    $updatedState = $userStateRepo->getUserState($test_user_id);
-    if ($updatedState && isset($updatedState['temp_data']['new_key'])) {
-        echo "✅ Данные обновлены корректно\n";
-    } else {
-        echo "❌ Данные не обновились\n";
-    }
-    
-    // Очистка тестовых данных
-    echo "4. Очищаем тестовые данные...\n";
-    $userStateRepo->clearState($test_user_id);
-    echo "✅ Очищено\n";
-    
-    echo "\n💡 Рекомендации:\n";
-    echo "- Если состояния не сохраняются, проверьте права на запись в БД\n";
-    echo "- Проверьте что в user_states есть записи для активных пользователей\n";
-    echo "- Убедитесь что temp_data корректно сериализуется в JSON\n";
-    
 } catch (Exception $e) {
-    echo "❌ Ошибка: " . $e->getMessage() . "\n";
-    echo "Trace: " . $e->getTraceAsString() . "\n";
+    echo "❌ Помилка: " . $e->getMessage() . "\n";
 }
 ?>

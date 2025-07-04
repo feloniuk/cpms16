@@ -43,7 +43,7 @@ class Keyboards {
         ];
     }
     
-    public function getBranchesKeyboard($branches, $prefix) {
+    public function getBranchesKeyboard($branches) {
         $keyboard = [];
         
         foreach ($branches as $branch) {
