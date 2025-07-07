@@ -9,6 +9,7 @@ require_once __DIR__ . '/../core/repositories/CartridgeRepository.php';
 require_once __DIR__ . '/../core/repositories/InventoryRepository.php';
 require_once __DIR__ . '/keyboards/Keyboards.php';
 require_once __DIR__ . '/Messages.php';
+require_once __DIR__ . '/SessionManager.php';
 
 class TelegramBot {
     private $token;
@@ -23,6 +24,7 @@ class TelegramBot {
     private $inventoryRepo;
     private $keyboards;
     private $db;
+    private $sessionManager;
     
     public function __construct() {
         $this->config = require __DIR__ . '/../config/telegram.php';
@@ -37,8 +39,9 @@ class TelegramBot {
         $this->cartridgeRepo = new CartridgeRepository();
         $this->inventoryRepo = new InventoryRepository();
         $this->keyboards = new Keyboards();
+        $this->sessionManager = SessionManager::getInstance();
         
-        $this->logMessage("TelegramBot initialized");
+        $this->logMessage("TelegramBot initialized with SessionManager");
     }
     
     public function handleUpdate($update) {
@@ -64,21 +67,25 @@ class TelegramBot {
         
         $this->logMessage("Message from user $user_id: $text");
         
+        // Инициализируем сессию пользователя
+        $this->sessionManager->startSession($user_id);
+        
         // Обработка команд
         if (strpos($text, '/') === 0) {
             $this->handleCommand($chat_id, $user_id, $username, $text);
             return;
         }
         
-        // Обработка по состоянию пользователя
+        // Обработка по состоянию пользователя (используем UserStateRepository для постоянности)
         $userState = $this->userStateRepo->getUserState($user_id);
         $current_state = $userState ? $userState['current_state'] : null;
+        $temp_data = $userState ? $userState['temp_data'] : [];
         
         $this->logMessage("User $user_id current state: " . ($current_state ?? 'NULL'));
         
         if ($current_state) {
             $this->logMessage("Handling state message for user $user_id in state: $current_state");
-            $this->handleStateMessage($chat_id, $user_id, $username, $text, $current_state, $userState['temp_data'] ?? []);
+            $this->handleStateMessage($chat_id, $user_id, $username, $text, $current_state, $temp_data ?? []);
         } else {
             $this->sendMessage($chat_id, Messages::mainMenu(), $this->keyboards->getMainMenu());
         }
@@ -89,6 +96,7 @@ class TelegramBot {
         
         switch ($command) {
             case '/start':
+                $this->sessionManager->clearSession($user_id);
                 $this->userStateRepo->clearState($user_id);
                 $this->sendMessage($chat_id, Messages::welcome($username), $this->keyboards->getMainMenu());
                 break;
@@ -98,6 +106,7 @@ class TelegramBot {
                 break;
                 
             case '/cancel':
+                $this->sessionManager->clearSession($user_id);
                 $this->userStateRepo->clearState($user_id);
                 $this->sendMessage($chat_id, Messages::actionCanceled(), $this->keyboards->getMainMenu());
                 break;
@@ -133,6 +142,7 @@ class TelegramBot {
         
         switch ($action) {
             case 'main_menu':
+                $this->sessionManager->clearSession($user_id);
                 $this->userStateRepo->clearState($user_id);
                 $this->editMessage($chat_id, $message_id, Messages::mainMenu(), $this->keyboards->getMainMenu());
                 break;
@@ -265,21 +275,29 @@ class TelegramBot {
                 break;
                 
             case 'admin_awaiting_branch_name':
-                $this->handleAddBranchName($chat_id, $user_id, $text);
+                if ($this->adminRepo->isAdmin($user_id)) {
+                    $this->handleAddBranchName($chat_id, $user_id, $text);
+                }
                 break;
                 
             case 'admin_awaiting_inventory_room':
-                $this->logMessage("Handling inventory room input for user $user_id");
-                $this->handleInventoryRoomInput($chat_id, $user_id, $text, $temp_data);
+                if ($this->adminRepo->isAdmin($user_id)) {
+                    $this->logMessage("Handling inventory room input for user $user_id");
+                    $this->handleInventoryRoomInput($chat_id, $user_id, $text, $temp_data);
+                }
                 break;
                 
             case 'admin_awaiting_inventory_equipment':
-                $this->logMessage("Handling inventory equipment input for user $user_id");
-                $this->handleInventoryEquipmentInput($chat_id, $user_id, $text, $temp_data);
+                if ($this->adminRepo->isAdmin($user_id)) {
+                    $this->logMessage("Handling inventory equipment input for user $user_id");
+                    $this->handleInventoryEquipmentInput($chat_id, $user_id, $text, $temp_data);
+                }
                 break;
                 
             case 'admin_awaiting_search_query':
-                $this->handleSearchQuery($chat_id, $user_id, $text);
+                if ($this->adminRepo->isAdmin($user_id)) {
+                    $this->handleSearchQuery($chat_id, $user_id, $text);
+                }
                 break;
                 
             default:
@@ -319,7 +337,7 @@ class TelegramBot {
             return;
         }
         
-        // Сохраняем выбранную филию
+        // Сохраняем выбранную филию в UserStateRepository
         $this->userStateRepo->addToTempData($user_id, 'branch_id', $branch_id);
         $this->userStateRepo->addToTempData($user_id, 'branch_name', $branch['name']);
         
@@ -358,7 +376,7 @@ class TelegramBot {
         $updated_state = $this->userStateRepo->getUserState($user_id);
         $updated_temp_data = $updated_state ? $updated_state['temp_data'] : [];
         
-        $this->sendMessage($chat_id, 
+        $this->sendOrEditMessage($chat_id, 
             Messages::repairRoomSelected(
                 $updated_temp_data['branch_name'] ?? 'Не вказано', 
                 trim($room_number)
@@ -403,18 +421,17 @@ class TelegramBot {
     
     private function createRepairRequest($chat_id, $user_id, $username, $phone) {
         try {
-            $userState = $this->userStateRepo->getUserState($user_id);
-            $temp_data = $userState ? $userState['temp_data'] : [];
+            $temp_data = $this->sessionManager->getTempData($user_id);
             
             if (!$temp_data || !isset($temp_data['branch_id'], $temp_data['room_number'], $temp_data['description'])) {
                 $this->sendMessage($chat_id, Messages::dataError(), $this->keyboards->getMainMenu());
-                $this->userStateRepo->clearState($user_id);
+                $this->sessionManager->clearSession($user_id);
                 return;
             }
             
             $request_id = $this->createRepairRequestInDB($temp_data['branch_id'], $temp_data['room_number'], $temp_data['description'], $phone, $username, $user_id);
             
-            $this->userStateRepo->clearState($user_id);
+            $this->sessionManager->clearSession($user_id);
             
             $this->sendMessage($chat_id, 
                 Messages::repairSuccess(
@@ -431,7 +448,7 @@ class TelegramBot {
         } catch (Exception $e) {
             $this->logError("Error creating repair request: " . $e->getMessage());
             $this->sendMessage($chat_id, Messages::systemError());
-            $this->userStateRepo->clearState($user_id);
+            $this->sessionManager->clearSession($user_id);
         }
     }
     
@@ -544,8 +561,10 @@ class TelegramBot {
             // Получаем заявки с информацией о филиалах
             $repairs = $this->repairRepo->getWithBranches($limit, $offset);
             
-            // Получаем общее количество
-            $total = $this->repairRepo->count();
+            // Получаем общее количество заявок
+            $stmt = $this->db->prepare("SELECT COUNT(*) as count FROM repair_requests");
+            $stmt->execute();
+            $total = $stmt->fetch()['count'];
             $total_pages = ceil($total / $limit);
             
             $keyboard = $this->keyboards->getRepairsListKeyboard($repairs, $page, $total_pages);
@@ -553,7 +572,7 @@ class TelegramBot {
             
         } catch (Exception $e) {
             $this->logError("Error showing repairs list: " . $e->getMessage());
-            $this->editMessage($chat_id, $message_id, "Помилка завантаження заявок.", $this->keyboards->getBackKeyboard('admin_menu'));
+            $this->editMessage($chat_id, $message_id, "❌ Помилка завантаження заявок.", $this->keyboards->getBackKeyboard('admin_menu'));
         }
     }
     
@@ -562,7 +581,7 @@ class TelegramBot {
             $repair = $this->repairRepo->getWithBranchInfo($repair_id);
             
             if (!$repair) {
-                $this->editMessage($chat_id, $message_id, "Заявку не знайдено.", $this->keyboards->getBackKeyboard('admin_repairs'));
+                $this->editMessage($chat_id, $message_id, "❌ Заявку не знайдено.", $this->keyboards->getBackKeyboard('admin_repairs'));
                 return;
             }
             
@@ -571,7 +590,7 @@ class TelegramBot {
             
         } catch (Exception $e) {
             $this->logError("Error showing repair details: " . $e->getMessage());
-            $this->editMessage($chat_id, $message_id, "Помилка завантаження деталей.", $this->keyboards->getBackKeyboard('admin_repairs'));
+            $this->editMessage($chat_id, $message_id, "❌ Помилка завантаження деталей.", $this->keyboards->getBackKeyboard('admin_repairs'));
         }
     }
     
@@ -580,15 +599,15 @@ class TelegramBot {
             $result = $this->repairRepo->updateStatus($repair_id, $new_status);
             
             if ($result) {
-                $this->sendMessage($chat_id, Messages::statusUpdated($new_status), null, 'HTML');
+                // Обновляем детали заявки с новым статусом
                 $this->showRepairDetails($chat_id, $user_id, $message_id, $repair_id);
             } else {
-                $this->sendMessage($chat_id, "Помилка оновлення статусу.");
+                $this->editMessage($chat_id, $message_id, "❌ Помилка оновлення статусу заявки.", $this->keyboards->getBackKeyboard('admin_repairs'));
             }
             
         } catch (Exception $e) {
             $this->logError("Error updating repair status: " . $e->getMessage());
-            $this->sendMessage($chat_id, "Помилка оновлення статусу.");
+            $this->editMessage($chat_id, $message_id, "❌ Помилка оновлення статусу заявки.", $this->keyboards->getBackKeyboard('admin_repairs'));
         }
     }
     
@@ -600,7 +619,10 @@ class TelegramBot {
             
             $cartridges = $this->cartridgeRepo->getWithBranches($limit, $offset);
             
-            $total = $this->cartridgeRepo->count();
+            // Получаем общее количество записей
+            $stmt = $this->db->prepare("SELECT COUNT(*) as count FROM cartridge_replacements");
+            $stmt->execute();
+            $total = $stmt->fetch()['count'];
             $total_pages = ceil($total / $limit);
             
             $keyboard = $this->keyboards->getCartridgesListKeyboard($page, $total_pages);
@@ -608,7 +630,7 @@ class TelegramBot {
             
         } catch (Exception $e) {
             $this->logError("Error showing cartridges list: " . $e->getMessage());
-            $this->editMessage($chat_id, $message_id, "Помилка завантаження історії.", $this->keyboards->getBackKeyboard('admin_menu'));
+            $this->editMessage($chat_id, $message_id, "❌ Помилка завантаження історії.", $this->keyboards->getBackKeyboard('admin_menu'));
         }
     }
     
@@ -620,7 +642,7 @@ class TelegramBot {
             
         } catch (Exception $e) {
             $this->logError("Error showing branches list: " . $e->getMessage());
-            $this->editMessage($chat_id, $message_id, "Помилка завантаження філій.", $this->keyboards->getBackKeyboard('admin_menu'));
+            $this->editMessage($chat_id, $message_id, "❌ Помилка завантаження філій.", $this->keyboards->getBackKeyboard('admin_menu'));
         }
     }
     
@@ -638,7 +660,9 @@ class TelegramBot {
                 return;
             }
             
-            if ($this->branchRepo->exists($branch_name)) {
+            // Проверяем существование филиала
+            $existing = $this->branchRepo->findByName($branch_name);
+            if ($existing) {
                 $this->sendMessage($chat_id, Messages::adminBranchExists());
                 return;
             }
@@ -654,6 +678,7 @@ class TelegramBot {
         } catch (Exception $e) {
             $this->logError("Error adding branch: " . $e->getMessage());
             $this->sendMessage($chat_id, Messages::systemError());
+            $this->userStateRepo->clearState($user_id);
         }
     }
     
@@ -695,7 +720,7 @@ class TelegramBot {
             
             if (!isset($temp_data['branch_id']) || !isset($temp_data['branch_name'])) {
                 $this->logError("Missing branch data in temp_data for user $user_id");
-                $this->sendMessage($chat_id, "❌ Помилка: дані про філію втрачено. Спробуйте ще раз.");
+                $this->sendMessage($chat_id, "❌ Помилка: дані про філію втрачено. Спробуйте ще раз.", $this->keyboards->getMainMenu());
                 $this->userStateRepo->clearState($user_id);
                 return;
             }
@@ -747,7 +772,7 @@ class TelegramBot {
             
             if (!isset($temp_data['branch_id']) || !isset($temp_data['room_number'])) {
                 $this->logError("Missing required data in temp_data for user $user_id");
-                $this->sendMessage($chat_id, "❌ Помилка: дані втрачено. Спробуйте ще раз.");
+                $this->sendMessage($chat_id, "❌ Помилка: дані втрачено. Спробуйте ще раз.", $this->keyboards->getMainMenu());
                 $this->userStateRepo->clearState($user_id);
                 return;
             }
@@ -790,8 +815,8 @@ class TelegramBot {
         try {
             $query = trim($query);
             
-            if (empty($query)) {
-                $this->sendMessage($chat_id, Messages::adminSearchStart());
+            if (empty($query) || strlen($query) < 2) {
+                $this->sendMessage($chat_id, "❌ Пошуковий запит повинен містити мінімум 2 символи. Спробуйте ще раз:");
                 return;
             }
             
@@ -803,11 +828,55 @@ class TelegramBot {
         } catch (Exception $e) {
             $this->logError("Error searching inventory: " . $e->getMessage());
             $this->sendMessage($chat_id, Messages::systemError());
+            $this->userStateRepo->clearState($user_id);
         }
     }
     
     private function showReports($chat_id, $user_id, $message_id) {
-        $this->editMessage($chat_id, $message_id, Messages::adminReports(), $this->keyboards->getReportsKeyboard(), 'HTML');
+        try {
+            // Получаем статистику для отчетов
+            $repairStats = $this->repairRepo->getStatsByStatus();
+            $branchStats = $this->repairRepo->getStatsByBranch();
+            $cartridgeStats = $this->cartridgeRepo->getStatsByBranch();
+            $inventoryStats = $this->inventoryRepo->getInventoryStats();
+            
+            $message = "📊 <b>Звіти та статистика</b>\n\n";
+            
+            // Статистика по заявкам
+            $message .= "🔧 <b>Заявки на ремонт:</b>\n";
+            foreach ($repairStats as $stat) {
+                $status_name = $this->getStatusName($stat['status']);
+                $message .= "   {$status_name}: {$stat['count']}\n";
+            }
+            
+            // Статистика по филиалам (топ 3)
+            $message .= "\n🏢 <b>Топ філій по заявках:</b>\n";
+            $topBranches = array_slice($branchStats, 0, 3);
+            foreach ($topBranches as $branch) {
+                $message .= "   {$branch['branch_name']}: {$branch['total_requests']} заявок\n";
+            }
+            
+            // Общая статистика инвентаря
+            if ($inventoryStats) {
+                $message .= "\n📋 <b>Інвентар:</b>\n";
+                $message .= "   Всього обладнання: {$inventoryStats['total_items']}\n";
+                $message .= "   Філій: {$inventoryStats['total_branches']}\n";
+                $message .= "   Кабінетів: {$inventoryStats['total_rooms']}\n";
+            }
+            
+            // Статистика по картриджам (за последний месяц)
+            $recentCartridges = $this->cartridgeRepo->getByDateRange(
+                date('Y-m-d', strtotime('-30 days')), 
+                date('Y-m-d')
+            );
+            $message .= "\n🖨️ <b>Заміни картриджів (30 днів):</b> " . count($recentCartridges) . "\n";
+            
+            $this->editMessage($chat_id, $message_id, $message, $this->keyboards->getBackKeyboard('admin_menu'), 'HTML');
+            
+        } catch (Exception $e) {
+            $this->logError("Error showing reports: " . $e->getMessage());
+            $this->editMessage($chat_id, $message_id, "❌ Помилка генерації звітів.", $this->keyboards->getBackKeyboard('admin_menu'));
+        }
     }
     
     // === МЕТОДЫ РАБОТЫ С БД ===
@@ -823,28 +892,47 @@ class TelegramBot {
     // === УВЕДОМЛЕНИЯ ===
     
     private function notifyAdminsAboutRepairRequest($request_id, $branch_name, $room_number, $description, $phone, $username, $user_id) {
-        $admins = $this->adminRepo->getActiveAdmins();
-        $message = Messages::notifyNewRepair($request_id, $branch_name, $room_number, $description, $phone, $username, $user_id);
-        
-        foreach ($admins as $admin) {
-            try {
-                $this->sendMessage($admin['telegram_id'], $message, null, 'HTML');
-            } catch (Exception $e) {
-                $this->logError("Failed to notify admin {$admin['telegram_id']}: " . $e->getMessage());
+        try {
+            $admins = $this->adminRepo->getActiveAdmins();
+            $message = Messages::notifyNewRepair($request_id, $branch_name, $room_number, $description, $phone, $username, $user_id);
+            
+            foreach ($admins as $admin) {
+                try {
+                    $this->sendMessage($admin['telegram_id'], $message, null, 'HTML');
+                } catch (Exception $e) {
+                    $this->logError("Failed to notify admin {$admin['telegram_id']}: " . $e->getMessage());
+                }
             }
+        } catch (Exception $e) {
+            $this->logError("Error getting admins for notification: " . $e->getMessage());
         }
     }
     
     private function notifyAdminsAboutCartridgeRequest($request_id, $branch_name, $room_number, $printer_info, $cartridge_type, $username, $user_id) {
-        $admins = $this->adminRepo->getActiveAdmins();
-        $message = Messages::notifyNewCartridge($request_id, $branch_name, $room_number, $printer_info, $cartridge_type, $username, $user_id);
-        
-        foreach ($admins as $admin) {
-            try {
-                $this->sendMessage($admin['telegram_id'], $message, null, 'HTML');
-            } catch (Exception $e) {
-                $this->logError("Failed to notify admin {$admin['telegram_id']}: " . $e->getMessage());
+        try {
+            $admins = $this->adminRepo->getActiveAdmins();
+            $message = Messages::notifyNewCartridge($request_id, $branch_name, $room_number, $printer_info, $cartridge_type, $username, $user_id);
+            
+            foreach ($admins as $admin) {
+                try {
+                    $this->sendMessage($admin['telegram_id'], $message, null, 'HTML');
+                } catch (Exception $e) {
+                    $this->logError("Failed to notify admin {$admin['telegram_id']}: " . $e->getMessage());
+                }
             }
+        } catch (Exception $e) {
+            $this->logError("Error getting admins for notification: " . $e->getMessage());
+        }
+    }
+    
+    // === ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ===
+    
+    private function getStatusName($status) {
+        switch ($status) {
+            case 'нова': return '🆕 Нова';
+            case 'в_роботі': return '⚙️ В роботі';
+            case 'виконана': return '✅ Виконана';
+            default: return '❓ Невідомий';
         }
     }
     
@@ -864,7 +952,38 @@ class TelegramBot {
             $data['reply_markup'] = json_encode($reply_markup);
         }
         
-        return $this->makeRequest('sendMessage', $data);
+        $result = $this->makeRequest('sendMessage', $data);
+        
+        // Сохраняем ID последнего отправленного сообщения
+        if ($result && isset($result['result']['message_id'])) {
+            $this->userStateRepo->addToTempData($chat_id, 'last_bot_message_id', $result['result']['message_id']);
+        }
+        
+        return $result;
+    }
+    
+    public function sendOrEditMessage($chat_id, $text, $reply_markup = null, $parse_mode = null) {
+        // Пытаемся получить ID последнего сообщения бота
+        $userState = $this->userStateRepo->getUserState($chat_id);
+        $lastMessageId = null;
+        
+        if ($userState && isset($userState['temp_data']['last_bot_message_id'])) {
+            $lastMessageId = $userState['temp_data']['last_bot_message_id'];
+        }
+        
+        if ($lastMessageId) {
+            // Редактируем существующее сообщение
+            try {
+                return $this->editMessage($chat_id, $lastMessageId, $text, $reply_markup, $parse_mode);
+            } catch (Exception $e) {
+                // Если не удалось отредактировать, отправляем новое
+                $this->logError("Failed to edit message: " . $e->getMessage());
+                return $this->sendMessage($chat_id, $text, $reply_markup, $parse_mode);
+            }
+        } else {
+            // Отправляем новое сообщение
+            return $this->sendMessage($chat_id, $text, $reply_markup, $parse_mode);
+        }
     }
     
     public function editMessage($chat_id, $message_id, $text, $reply_markup = null, $parse_mode = null) {
@@ -905,7 +1024,8 @@ class TelegramBot {
             CURLOPT_POSTFIELDS => $data,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_TIMEOUT => 30
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_CONNECTTIMEOUT => 10
         ]);
         
         $response = curl_exec($ch);
@@ -914,6 +1034,7 @@ class TelegramBot {
         if (curl_error($ch)) {
             $error = curl_error($ch);
             curl_close($ch);
+            $this->logError("cURL error in $method: $error");
             throw new Exception("cURL error: $error");
         }
         
@@ -922,7 +1043,8 @@ class TelegramBot {
         $decoded = json_decode($response, true);
         
         if ($http_code !== 200 || !$decoded || !$decoded['ok']) {
-            $error_description = isset($decoded['description']) ? $decoded['description'] : 'Unknown error';
+            $error_description = isset($decoded['description']) ? $decoded['description'] : "HTTP $http_code";
+            $this->logError("Telegram API error in $method: $error_description");
             throw new Exception("Telegram API error: $error_description");
         }
         

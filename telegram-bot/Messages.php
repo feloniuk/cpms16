@@ -306,10 +306,6 @@ class Messages {
         return $message;
     }
     
-    public static function adminReports() {
-        return "📊 <b>Звіти</b>\n\nОберіть тип звіту:";
-    }
-    
     public static function statusUpdated($newStatus) {
         $statusText = self::getStatusText($newStatus);
         return "✅ Статус заявки змінено на: <b>$statusText</b>";
@@ -358,7 +354,7 @@ class Messages {
     }
     
     public static function systemError() {
-        return "❌ Виникла помилка. Спробуйте пізніше.";
+        return "❌ Виникла помилка. Спробуйте пізніше або зверніться до адміністратора.";
     }
     
     // Вспомогательные методы
@@ -381,6 +377,6 @@ class Messages {
     }
     
     private static function truncateText($text, $length) {
-        return strlen($text) > $length ? substr($text, 0, $length) . '...' : $text;
+        return mb_strlen($text) > $length ? mb_substr($text, 0, $length) . '...' : $text;
     }
 }

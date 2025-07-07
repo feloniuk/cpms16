@@ -89,6 +89,10 @@ class Keyboards {
         foreach ($repairs as $repair) {
             $status = $this->getStatusEmoji($repair['status']);
             $text = "#{$repair['id']} $status {$repair['branch_name']} - {$repair['room_number']}";
+            // Обрезаем текст если он слишком длинный
+            if (strlen($text) > 40) {
+                $text = substr($text, 0, 37) . '...';
+            }
             $keyboard[] = [
                 ['text' => $text, 'callback_data' => "repair_details:{$repair['id']}"]
             ];
@@ -113,6 +117,7 @@ class Keyboards {
         
         // Кнопки навигации
         $keyboard[] = [
+            ['text' => '🔄 Оновити', 'callback_data' => 'admin_repairs'],
             ['text' => '◀️ Адмін-панель', 'callback_data' => 'admin_menu']
         ];
         
@@ -141,6 +146,7 @@ class Keyboards {
         
         // Кнопки навигации
         $keyboard[] = [
+            ['text' => '🔄 Оновити', 'callback_data' => 'admin_cartridges'],
             ['text' => '◀️ Адмін-панель', 'callback_data' => 'admin_menu']
         ];
         
@@ -160,7 +166,8 @@ class Keyboards {
                     ['text' => '🔙 Нова', 'callback_data' => "status_update:$repair_id:нова"]
                 ],
                 [
-                    ['text' => '◀️ Назад до списку', 'callback_data' => 'admin_repairs']
+                    ['text' => '🔄 Оновити', 'callback_data' => "repair_details:$repair_id"],
+                    ['text' => '◀️ До списку', 'callback_data' => 'admin_repairs']
                 ]
             ]
         ];
@@ -173,6 +180,9 @@ class Keyboards {
                     ['text' => '➕ Додати філію', 'callback_data' => 'add_branch']
                 ],
                 [
+                    ['text' => '🔄 Оновити список', 'callback_data' => 'admin_branches']
+                ],
+                [
                     ['text' => '◀️ Адмін-панель', 'callback_data' => 'admin_menu']
                 ]
             ]
@@ -183,16 +193,7 @@ class Keyboards {
         return [
             'inline_keyboard' => [
                 [
-                    ['text' => '🏢 Звіт по філіях', 'callback_data' => 'report_branches']
-                ],
-                [
-                    ['text' => '🚪 Звіт по кабінетах', 'callback_data' => 'report_rooms']
-                ],
-                [
-                    ['text' => '🔧 Заявки за період', 'callback_data' => 'report_repairs']
-                ],
-                [
-                    ['text' => '🖨️ Картриджі за період', 'callback_data' => 'report_cartridges']
+                    ['text' => '🔄 Оновити звіти', 'callback_data' => 'admin_reports']
                 ],
                 [
                     ['text' => '◀️ Адмін-панель', 'callback_data' => 'admin_menu']
