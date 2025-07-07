@@ -33,8 +33,7 @@ class Keyboards {
                     ['text' => '📈 Звіти', 'callback_data' => 'admin_reports']
                 ],
                 [
-                    ['text' => '🏢 Управління філіями', 'callback_data' => 'admin_branches'],
-                    ['text' => '👥 Управління адмінами', 'callback_data' => 'admin_users']
+                    ['text' => '🏢 Управління філіями', 'callback_data' => 'admin_branches']
                 ],
                 [
                     ['text' => '🏠 Головне меню', 'callback_data' => 'main_menu']
@@ -52,7 +51,7 @@ class Keyboards {
             ];
         }
         
-        // Кнопка повернення
+        // Кнопка возврата
         $keyboard[] = [
             ['text' => '🏠 Головне меню', 'callback_data' => 'main_menu']
         ];
@@ -83,58 +82,66 @@ class Keyboards {
         ];
     }
     
-    public function getConfirmKeyboard($confirm_action, $cancel_action = 'main_menu') {
-        return [
-            'inline_keyboard' => [
-                [
-                    ['text' => '✅ Підтвердити', 'callback_data' => $confirm_action],
-                    ['text' => '❌ Скасувати', 'callback_data' => $cancel_action]
-                ]
-            ]
-        ];
-    }
-    
-    public function getBackKeyboard($back_action) {
-        return [
-            'inline_keyboard' => [
-                [
-                    ['text' => '◀️ Назад', 'callback_data' => $back_action]
-                ],
-                [
-                    ['text' => '🏠 Головне меню', 'callback_data' => 'main_menu']
-                ]
-            ]
-        ];
-    }
-    
-    public function getPaginationKeyboard($current_page, $total_pages, $base_action, $additional_buttons = []) {
+    public function getRepairsListKeyboard($repairs, $page, $total_pages) {
         $keyboard = [];
         
-        // Додаткові кнопки зверху
-        foreach ($additional_buttons as $button) {
-            $keyboard[] = [$button];
+        // Кнопки заявок
+        foreach ($repairs as $repair) {
+            $status = $this->getStatusEmoji($repair['status']);
+            $text = "#{$repair['id']} $status {$repair['branch_name']} - {$repair['room_number']}";
+            $keyboard[] = [
+                ['text' => $text, 'callback_data' => "repair_details:{$repair['id']}"]
+            ];
         }
         
-        // Кнопки пагінації
+        // Пагинация
         if ($total_pages > 1) {
             $pagination_row = [];
             
-            if ($current_page > 1) {
-                $pagination_row[] = ['text' => '◀️', 'callback_data' => $base_action . ':' . ($current_page - 1)];
+            if ($page > 1) {
+                $pagination_row[] = ['text' => '◀️', 'callback_data' => 'repairs_page:' . ($page - 1)];
             }
             
-            $pagination_row[] = ['text' => "$current_page / $total_pages", 'callback_data' => 'noop'];
+            $pagination_row[] = ['text' => "$page / $total_pages", 'callback_data' => 'noop'];
             
-            if ($current_page < $total_pages) {
-                $pagination_row[] = ['text' => '▶️', 'callback_data' => $base_action . ':' . ($current_page + 1)];
+            if ($page < $total_pages) {
+                $pagination_row[] = ['text' => '▶️', 'callback_data' => 'repairs_page:' . ($page + 1)];
             }
             
             $keyboard[] = $pagination_row;
         }
         
-        // Кнопка повернення
+        // Кнопки навигации
         $keyboard[] = [
-            ['text' => '🏠 Головне меню', 'callback_data' => 'main_menu']
+            ['text' => '◀️ Адмін-панель', 'callback_data' => 'admin_menu']
+        ];
+        
+        return ['inline_keyboard' => $keyboard];
+    }
+    
+    public function getCartridgesListKeyboard($page, $total_pages) {
+        $keyboard = [];
+        
+        // Пагинация
+        if ($total_pages > 1) {
+            $pagination_row = [];
+            
+            if ($page > 1) {
+                $pagination_row[] = ['text' => '◀️', 'callback_data' => 'cartridges_page:' . ($page - 1)];
+            }
+            
+            $pagination_row[] = ['text' => "$page / $total_pages", 'callback_data' => 'noop'];
+            
+            if ($page < $total_pages) {
+                $pagination_row[] = ['text' => '▶️', 'callback_data' => 'cartridges_page:' . ($page + 1)];
+            }
+            
+            $keyboard[] = $pagination_row;
+        }
+        
+        // Кнопки навигации
+        $keyboard[] = [
+            ['text' => '◀️ Адмін-панель', 'callback_data' => 'admin_menu']
         ];
         
         return ['inline_keyboard' => $keyboard];
@@ -159,73 +166,17 @@ class Keyboards {
         ];
     }
     
-    public function getInventoryTemplatesKeyboard($templates) {
-        $keyboard = [];
-        
-        foreach ($templates as $template) {
-            $keyboard[] = [
-                ['text' => $template['name'], 'callback_data' => "template_select:{$template['id']}"]
-            ];
-        }
-        
-        $keyboard[] = [
-            ['text' => '➕ Створити новий', 'callback_data' => 'template_create_new']
-        ];
-        
-        $keyboard[] = [
-            ['text' => '◀️ Назад', 'callback_data' => 'admin_menu']
-        ];
-        
-        return ['inline_keyboard' => $keyboard];
-    }
-    
-    public function getSearchTypeKeyboard() {
+    public function getBranchesManagementKeyboard() {
         return [
             'inline_keyboard' => [
                 [
-                    ['text' => '🔢 По інвентарному номеру', 'callback_data' => 'search_type:inventory']
+                    ['text' => '➕ Додати філію', 'callback_data' => 'add_branch']
                 ],
                 [
-                    ['text' => '📟 По серійному номеру', 'callback_data' => 'search_type:serial']
-                ],
-                [
-                    ['text' => '🏢 По філії та кабінету', 'callback_data' => 'search_type:location']
-                ],
-                [
-                    ['text' => '🖥️ По типу обладнання', 'callback_data' => 'search_type:equipment']
-                ],
-                [
-                    ['text' => '◀️ Назад', 'callback_data' => 'admin_menu']
+                    ['text' => '◀️ Адмін-панель', 'callback_data' => 'admin_menu']
                 ]
             ]
         ];
-    }
-    
-    public function getEquipmentTypesKeyboard() {
-        $types = [
-            'Комп\'ютер' => 'computer',
-            'Монітор' => 'monitor', 
-            'Принтер' => 'printer',
-            'Клавіатура' => 'keyboard',
-            'Миша' => 'mouse',
-            'Сканер' => 'scanner',
-            'ІБП' => 'ups',
-            'Роутер' => 'router',
-            'Інше' => 'other'
-        ];
-        
-        $keyboard = [];
-        foreach ($types as $name => $code) {
-            $keyboard[] = [
-                ['text' => $name, 'callback_data' => "equipment_type:$code"]
-            ];
-        }
-        
-        $keyboard[] = [
-            ['text' => '◀️ Назад', 'callback_data' => 'admin_search']
-        ];
-        
-        return ['inline_keyboard' => $keyboard];
     }
     
     public function getReportsKeyboard() {
@@ -244,9 +195,31 @@ class Keyboards {
                     ['text' => '🖨️ Картриджі за період', 'callback_data' => 'report_cartridges']
                 ],
                 [
-                    ['text' => '◀️ Назад', 'callback_data' => 'admin_menu']
+                    ['text' => '◀️ Адмін-панель', 'callback_data' => 'admin_menu']
                 ]
             ]
         ];
+    }
+    
+    public function getBackKeyboard($back_action) {
+        return [
+            'inline_keyboard' => [
+                [
+                    ['text' => '◀️ Назад', 'callback_data' => $back_action]
+                ],
+                [
+                    ['text' => '🏠 Головне меню', 'callback_data' => 'main_menu']
+                ]
+            ]
+        ];
+    }
+    
+    private function getStatusEmoji($status) {
+        switch ($status) {
+            case 'нова': return '🆕';
+            case 'в_роботі': return '⚙️';
+            case 'виконана': return '✅';
+            default: return '❓';
+        }
     }
 }
