@@ -4,7 +4,7 @@
 # Включение модуля перезаписи
 RewriteEngine On
 
-RewriteRule ^web-panel/(.*)$ web-panel/public/$1 [L]
+RewriteRule ^/(.*)$ webpanel/public/$1 [L]
 
 # Основная защита - только запрет доступа к критичным папкам
 <Directory "config">
